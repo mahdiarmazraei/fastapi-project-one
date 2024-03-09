@@ -21,13 +21,21 @@ class UserSignin(BaseModel):
     username: str
     password: str
     # example_cookie: str = Cookie(None, description="Example cookie for authentication purposes.")
-
 class UserSignup(UserSignin):
     email: str
-# ایجاد جداول در دیتابیس (اگر وجود نداشته باشد)
+
+
+class OwnerSignin(BaseModel):
+    username : str
+    password : str
+class OwnerSignup(OwnerSignin):
+    shop_name : str
+    first_name : str
+    last_name : str
+    email : str
+
 models.Base.metadata.create_all(bind=engine)
 
-# Dependency برای دریافت اتصال به دیتابیس
 def get_db():
     db = SessionLocal()
     try:
@@ -37,7 +45,6 @@ def get_db():
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# تابع برای ایجاد توکن
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
@@ -48,7 +55,6 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# کلاس برای ایجاد یک instance از CryptContext
 class PasswordHasher:
     def __init__(self):
         self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -61,9 +67,10 @@ class PasswordHasher:
 
 pwd_context = PasswordHasher()
 
-# API برای ثبت‌نام
 @app.post("/register/")
 def register(response: Response ,user: UserSignup = Body(...),token_cookie: str = Cookie(None),db: Session = Depends(get_db)):
+    userexist = db.query(models.User).filter(models.User.username == user.username).first()
+
     if token_cookie != None:
         try:
             payload = jwt.decode(token_cookie, SECRET_KEY, algorithms=[ALGORITHM])
@@ -72,7 +79,19 @@ def register(response: Response ,user: UserSignup = Body(...),token_cookie: str 
             if expiration_datetime > datetime.utcnow():
                 return {"message": "you eldearly logn"}
         except:
-
+            if not userexist:
+                token_cookie = create_access_token({"username" : user.username})
+                response.set_cookie(key="token_cookie", value = token_cookie)
+                hashed_password = pwd_context.get_password_hash(user.password)
+                db_user = models.User(username=user.username, email=user.email, hashed_password=hashed_password,)
+                db.add(db_user)
+                db.commit()
+                db.refresh(db_user)
+                return db_user
+            else:
+                return {" you should login, this username is exist"}
+    else:
+        if not userexist:
             token_cookie = create_access_token({"username" : user.username})
             response.set_cookie(key="token_cookie", value = token_cookie)
             hashed_password = pwd_context.get_password_hash(user.password)
@@ -81,8 +100,10 @@ def register(response: Response ,user: UserSignup = Body(...),token_cookie: str 
             db.commit()
             db.refresh(db_user)
             return db_user
+        else:
+            token_cookie = create_access_token({"username" : user.username})
+            response.set_cookie(key="token_cookie", value = token_cookie)
 
-# API برای ورود
 @app.post("/login/")
 def login(response: Response ,users: UserSignin = Body(...),token_cookie: str = Cookie(None), db: Session = Depends(get_db)):
     if token_cookie:
@@ -93,12 +114,6 @@ def login(response: Response ,users: UserSignin = Body(...),token_cookie: str = 
             if expiration_datetime > datetime.utcnow():
                 return {"message": "you eldearly login"}
         except ExpiredSignatureError:
-
-        # payload = jwt.decode(token_cookie, SECRET_KEY, algorithms=[ALGORITHM])
-        # exp_timestamp = payload.get("exp")
-        # expiration_datetime = datetime.utcnow() + timedelta(seconds=exp_timestamp)
-        # if expiration_datetime > datetime.utcnow():
-        #     return {"message": "you eldearly login"}
             user = db.query(models.User).filter(models.User.username == users.username).first()
             if not user or not pwd_context.verify_password(users.password, user.hashed_password):
                 raise HTTPException(
@@ -109,3 +124,29 @@ def login(response: Response ,users: UserSignin = Body(...),token_cookie: str = 
             token_cookie = create_access_token({"username" : users.username})
             response.set_cookie(key="token_cookie", value = token_cookie)
             return {"message": "Login successful"}
+    else:
+        user = db.query(models.User).filter(models.User.username == users.username).first()
+        if not user or not pwd_context.verify_password(users.password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        token_cookie = create_access_token({"username" : users.username})
+        response.set_cookie(key="token_cookie", value = token_cookie)
+        return {"message": "Login successful"}
+@app.post("/signout/")
+def signout(response: Response,token_cookie: str = Cookie(None)):
+    if  token_cookie is not None:
+        # حذف کوکی با استفاده از نام کوکی
+        response.delete_cookie("token_cookie")
+        return {"message": f"Cookie '{token_cookie}' deleted successfully"}
+    else:
+        return {"message": "No cookie name provided"}
+    
+
+
+
+
+
+    
